@@ -23,25 +23,31 @@ export class StrategyService {
     const lastEmaSlow = emaSlow[emaSlow.length - 1];
     const lastMacd = macd[macd.length - 1];
 
-    let score = 0;
     let confidence = 0;
+    let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
 
-    // RSI Logic
-    if (lastRsi < 30) score += 1;
-    if (lastRsi > 70) score -= 1;
+    // Weighted System
+    // RSI: 0.4
+    // EMA: 0.3
+    // MACD: 0.3
 
-    // EMA Cross
-    if (lastEmaFast > lastEmaSlow) score += 1;
-    else score -= 1;
+    let rsiSignal = 0; // 1 for buy, -1 for sell
+    if (lastRsi < 30) rsiSignal = 1;
+    else if (lastRsi > 70) rsiSignal = -1;
 
-    // MACD
-    if (lastMacd && lastMacd.histogram! > 0) score += 1;
-    else score -= 1;
+    let emaSignal = lastEmaFast > lastEmaSlow ? 1 : -1;
+    let macdSignal = (lastMacd && lastMacd.histogram! > 0) ? 1 : -1;
 
-    confidence = Math.abs(score) / 3;
+    // Calculate direction
+    const totalScore = (rsiSignal * 0.4) + (emaSignal * 0.3) + (macdSignal * 0.3);
+    
+    if (totalScore > 0.4) action = 'BUY';
+    else if (totalScore < -0.4) action = 'SELL';
+
+    confidence = Math.abs(totalScore);
 
     return {
-      action: score > 1 ? 'BUY' : (score < -1 ? 'SELL' : 'HOLD'),
+      action,
       confidence,
       indicators: {
         rsi: lastRsi,

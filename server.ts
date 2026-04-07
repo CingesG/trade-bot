@@ -1,6 +1,8 @@
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import axios from 'axios';
+import { config } from './config';
 import { DataService } from './services/data-service';
 import { StrategyService } from './services/strategy-service';
 import { AIService } from './services/ai-service';
@@ -47,41 +49,65 @@ async function startServer() {
 
   // Main Bot Loop
   async function botCycle() {
-    for (const symbol of SYMBOLS) {
-      try {
-        const priceData = await DataService.getPrice(symbol);
-        const currentPrice = priceData.bid;
-        state.prices[symbol] = currentPrice;
+    try {
+      // Sync active trades with MT5 positions
+      const positionsResponse = await axios.get(`${config.BRIDGE_URL}/positions`, { timeout: 3000 });
+      const mt5Positions = positionsResponse.data;
+      
+      // Update state.activeTrades based on MT5 positions
+      state.activeTrades = state.activeTrades.filter(trade => {
+        if (trade.id.startsWith('mock-')) return true; // Keep mock trades
+        return mt5Positions.some((p: any) => p.ticket === trade.mt5Order);
+      });
 
-        const candles = await DataService.getKlines(symbol, '1m', 50);
-        if (candles.length < 50) continue;
+      for (const symbol of SYMBOLS) {
+        try {
+          const priceData = await DataService.getPrice(symbol);
+          const currentPrice = priceData.bid;
+          state.prices[symbol] = currentPrice;
 
-        const analysis = StrategyService.analyze(candles);
-        state.lastAnalysis[symbol] = analysis;
+          const candles = await DataService.getKlines(symbol, '1m', 50);
+          if (candles.length < 50) continue;
 
-        const riskCheck = await RiskService.canTrade(state.balance);
-        
-        if (analysis.action !== 'HOLD' && analysis.confidence > 0.7 && riskCheck.allowed) {
-          const aiValidation = await AIService.validateSignal(symbol, analysis.action, analysis.indicators, currentPrice);
+          const analysis = StrategyService.analyze(candles);
+          state.lastAnalysis[symbol] = analysis;
+
+          const riskCheck = await RiskService.canTrade(state.balance);
           
-          if (aiValidation.decision === 'CONFIRM') {
-            const slPips = 20;
-            const lotSize = RiskService.calculateLotSize(state.balance, slPips, symbol);
+          if (analysis.action !== 'HOLD' && analysis.confidence > 0.7 && riskCheck.allowed) {
+            const aiValidation = await AIService.validateSignal(symbol, analysis.action, analysis.indicators, currentPrice);
             
-            const sl = analysis.action === 'BUY' ? currentPrice - 0.0020 : currentPrice + 0.0020;
-            const tp = analysis.action === 'BUY' ? currentPrice + 0.0040 : currentPrice - 0.0040;
-            
-            const result = await ExecutionService.placeOrder(symbol, analysis.action as 'BUY' | 'SELL', lotSize, sl, tp);
-            
-            if (result.success) {
-              state.activeTrades.push(result);
-              broadcast({ type: 'TRADE_OPENED', trade: result });
+            if (aiValidation.decision === 'CONFIRM') {
+              const slPips = 20;
+              const lotSize = RiskService.calculateLotSize(state.balance, slPips, symbol);
+              
+              // Dynamic SL/TP based on symbol
+              let pipValue = 0.0001;
+              if (symbol.includes('JPY')) pipValue = 0.01;
+              else if (symbol.includes('BTC')) pipValue = 1.0;
+              else if (symbol.includes('ETH')) pipValue = 0.1;
+
+              const slDist = slPips * pipValue;
+              const tpDist = slDist * 2;
+
+              const sl = analysis.action === 'BUY' ? currentPrice - slDist : currentPrice + slDist;
+              const tp = analysis.action === 'BUY' ? currentPrice + tpDist : currentPrice - tpDist;
+              
+              const result = await ExecutionService.placeOrder(symbol, analysis.action as 'BUY' | 'SELL', lotSize, sl, tp);
+              
+              if (result.success) {
+                state.activeTrades.push(result);
+                broadcast({ type: 'TRADE_OPENED', trade: result });
+                console.log(`[${symbol}] Trade opened: ${analysis.action} @ ${currentPrice}`);
+              }
             }
           }
+        } catch (error) {
+          console.error(`Error in bot cycle for ${symbol}:`, error.message);
         }
-      } catch (error) {
-        // Silent fail for symbols not available in bridge yet
       }
+    } catch (error) {
+      console.error('Error syncing positions:', error.message);
     }
     broadcast({ type: 'STATE_UPDATE', state });
   }

@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import MetaTrader5 as mt5
 import uvicorn
+import os
 from typing import List, Optional
 
 app = FastAPI(title="MT5 AI Bridge")
@@ -22,10 +23,29 @@ class ConnectionRequest(BaseModel):
 def startup():
     if not mt5.initialize():
         print("MT5 initialize failed, error code =", mt5.last_error())
+        return
+
+    login = os.getenv("MT5_LOGIN")
+    password = os.getenv("MT5_PASSWORD")
+    server = os.getenv("MT5_SERVER")
+
+    if login and password and server:
+        authorized = mt5.login(int(login), password=password, server=server)
+        if authorized:
+            print(f"MT5 authorized successfully for account {login}")
+        else:
+            print(f"MT5 login failed for account {login}, error =", mt5.last_error())
 
 @app.on_event("shutdown")
 def shutdown():
     mt5.shutdown()
+
+@app.get("/positions")
+def get_positions():
+    positions = mt5.positions_get()
+    if positions is None:
+        return []
+    return [p._asdict() for p in positions]
 
 @app.post("/connect")
 def connect(req: ConnectionRequest):

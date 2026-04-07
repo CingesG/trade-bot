@@ -5,19 +5,32 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 export class AIService {
   static async validateSignal(symbol: string, action: string, indicators: any, price: number) {
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.0-flash",
+        systemInstruction: "You are a conservative quantitative trading assistant. Your goal is to validate signals from technical indicators. You prioritize capital preservation and only confirm high-probability setups. If uncertain, always prefer REJECT."
+      });
       
+      const session = new Date().getUTCHours() >= 8 && new Date().getUTCHours() <= 16 ? "London" : 
+                      (new Date().getUTCHours() >= 13 || new Date().getUTCHours() <= 21 ? "New York" : "Asia");
+
       const prompt = `
-        As a professional quantitative trader, analyze this trading signal:
-        Symbol: ${symbol}
-        Action: ${action}
-        Current Price: ${price}
-        Indicators: ${JSON.stringify(indicators)}
+        Analyze this trading signal for ${symbol}:
+        - Action: ${action}
+        - Current Price: ${price}
+        - Trading Session: ${session}
+        - Indicators: ${JSON.stringify(indicators)}
         
-        Provide a JSON response with:
-        - decision: "CONFIRM" or "REJECT"
-        - reason: Brief explanation
-        - confidence: 0 to 1
+        Market Context:
+        - RSI is ${indicators.rsi > 70 ? 'Overbought' : (indicators.rsi < 30 ? 'Oversold' : 'Neutral')}
+        - EMA 9 is ${indicators.emaFast > indicators.emaSlow ? 'Above' : 'Below'} EMA 21
+        - MACD Histogram is ${indicators.macd?.histogram > 0 ? 'Positive' : 'Negative'}
+
+        Provide a JSON response:
+        {
+          "decision": "CONFIRM" | "REJECT",
+          "reason": "short explanation",
+          "confidence": 0.0 to 1.0
+        }
       `;
 
       const result = await model.generateContent(prompt);

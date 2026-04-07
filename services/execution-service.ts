@@ -1,19 +1,17 @@
 import axios from 'axios';
-import { db } from '../src/lib/firebase';
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
-
-const BRIDGE_URL = 'http://localhost:8001';
+import { adminDb } from '../src/lib/firebaseAdmin';
+import { config } from '../config';
 
 export class ExecutionService {
   static async placeOrder(symbol: string, action: 'BUY' | 'SELL', volume: number, sl?: number, tp?: number) {
     try {
-      const response = await axios.post(`${BRIDGE_URL}/order`, {
+      const response = await axios.post(`${config.BRIDGE_URL}/order`, {
         symbol,
         action,
         volume,
         sl,
         tp
-      });
+      }, { timeout: 5000 });
 
       if (response.data.success) {
         const tradeData = {
@@ -28,36 +26,53 @@ export class ExecutionService {
           mt5Order: response.data.order
         };
 
-        const docRef = await addDoc(collection(db, 'trades'), tradeData);
+        const docRef = await adminDb.collection('trades').add(tradeData);
         return { success: true, id: docRef.id, ...tradeData };
       }
       
       return { success: false, error: response.data.error };
     } catch (error) {
-      console.error('Order execution failed:', error);
+      if (config.IS_MOCK_MODE) {
+        const mockTrade = {
+          id: 'mock-' + Date.now(),
+          symbol,
+          action,
+          volume,
+          entryPrice: symbol.includes('JPY') ? 150 : 1.08,
+          sl: sl || 0,
+          tp: tp || 0,
+          status: 'OPEN',
+          timestamp: new Date().toISOString(),
+          mt5Order: Math.floor(Math.random() * 1000000)
+        };
+        return { success: true, ...mockTrade };
+      }
+      console.error('Order execution failed:', error.message);
       return { success: false, error: 'Bridge connection failed' };
     }
   }
 
   static async closeTrade(tradeId: string, mt5Order: number) {
     try {
-      // In real MT5, closing is often done by opening an opposite position or using a specific close command
-      // For simplicity, we assume the bridge handles closing by order ID or symbol
-      const response = await axios.post(`${BRIDGE_URL}/close`, { order: mt5Order });
+      const response = await axios.post(`${config.BRIDGE_URL}/close`, { order: mt5Order }, { timeout: 5000 });
       
       if (response.data.success) {
-        const tradeRef = doc(db, 'trades', tradeId);
-        await updateDoc(tradeRef, {
-          status: 'CLOSED',
-          exitPrice: response.data.price,
-          profit: response.data.profit,
-          closedAt: new Date().toISOString()
-        });
+        if (!tradeId.startsWith('mock-')) {
+          await adminDb.collection('trades').doc(tradeId).update({
+            status: 'CLOSED',
+            exitPrice: response.data.price,
+            profit: response.data.profit,
+            closedAt: new Date().toISOString()
+          });
+        }
         return { success: true };
       }
       return { success: false, error: response.data.error };
     } catch (error) {
-      console.error('Closing trade failed:', error);
+      if (config.IS_MOCK_MODE) {
+        return { success: true };
+      }
+      console.error('Closing trade failed:', error.message);
       return { success: false, error: 'Bridge connection failed' };
     }
   }

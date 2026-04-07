@@ -53,21 +53,49 @@ export default function App() {
     fetchStatus();
 
     // WebSocket connection
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'STATE_UPDATE') {
-        setState(data.state);
-      }
-      if (data.type === 'TRADE_OPENED') {
-        // Handle trade notification
-        console.log('New trade opened:', data.trade);
-      }
+    let ws: WebSocket;
+    let reconnectTimeout: NodeJS.Timeout;
+    let reconnectDelay = 1000;
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+      ws.onopen = () => {
+        console.log('Connected to server');
+        reconnectDelay = 1000;
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'STATE_UPDATE') {
+          setState(data.state);
+        }
+        if (data.type === 'TRADE_OPENED') {
+          console.log('New trade opened:', data.trade);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('Disconnected from server, reconnecting...');
+        reconnectTimeout = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+          connect();
+        }, reconnectDelay);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        ws.close();
+      };
     };
 
-    return () => ws.close();
+    connect();
+
+    return () => {
+      if (ws) ws.close();
+      clearTimeout(reconnectTimeout);
+    };
   }, []);
 
   if (!state) return (
