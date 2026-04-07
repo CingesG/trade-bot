@@ -4,19 +4,21 @@ This is a professional-grade, full-stack algorithmic trading system that connect
 
 ## 🚀 Key Features
 - **Real-Time MT5 Integration:** Uses a Python FastAPI bridge to execute real trades and fetch live tick data.
-- **AI-Powered Analysis:** Multi-indicator analysis (Bollinger Bands, RSI, MACD, ATR) with confidence-based signals.
-- **WebSocket Streaming:** Real-time price and analysis updates pushed to the frontend via WebSockets (Port 8080).
+- **AI-Powered Analysis:** Multi-indicator analysis (RSI, EMA, MACD) validated by Gemini 2.0 Flash AI.
+- **WebSocket Streaming:** Real-time price and analysis updates pushed to the frontend via WebSockets (Port 3000).
 - **Professional Risk Management:** 
   - Automatic lot sizing based on **1% risk** per trade.
-  - Strict limits on active trades per symbol and total exposure.
-- **Multi-Asset Screener:** Monitors Forex, Crypto, Stocks, Commodities, and Indices simultaneously.
-- **Pro UI:** High-performance dashboard with interactive charts and AI sentiment indicators.
+  - Strict limits on concurrent trades and daily loss limits.
+  - Symbol-aware SL/TP calculations.
+- **Persistence:** Trade history and performance logs stored in Firebase Firestore.
+- **Pro UI:** High-performance dashboard with real-time P/L tracking and bridge health monitoring.
 
 ## 🏗️ Architecture
 1. **Frontend (React/Vite):** Professional trading dashboard.
 2. **Backend (Node.js/Express):** Core bot logic, strategy execution, and WebSocket server.
 3. **Bridge (Python/FastAPI):** Intermediary between Node.js and the MetaTrader 5 Terminal.
-4. **Terminal (MetaTrader 5):** The execution platform connected to your broker.
+4. **Database (Firebase):** Firestore for trade logging and performance tracking.
+5. **Terminal (MetaTrader 5):** The execution platform connected to your broker.
 
 ## 🛠️ Setup Instructions
 

@@ -40,6 +40,13 @@ def startup():
 def shutdown():
     mt5.shutdown()
 
+@app.get("/account")
+def get_account():
+    info = mt5.account_info()
+    if info is None:
+        raise HTTPException(status_code=500, detail="Failed to get account info")
+    return info._asdict()
+
 @app.get("/positions")
 def get_positions():
     positions = mt5.positions_get()

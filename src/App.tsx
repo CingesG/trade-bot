@@ -38,6 +38,8 @@ export default function App() {
   const [state, setState] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('Trade');
   const [activeSymbol, setActiveSymbol] = useState('EURUSD');
+  const [bridgeConnected, setBridgeConnected] = useState(true);
+  const [latency, setLatency] = useState(0);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -50,7 +52,18 @@ export default function App() {
       }
     };
 
+    const checkBridge = async () => {
+      try {
+        const res = await fetch('/api/bridge-health');
+        const data = await res.json();
+        setBridgeConnected(data.connected);
+      } catch {
+        setBridgeConnected(false);
+      }
+    };
+
     fetchStatus();
+    const bridgeInterval = setInterval(checkBridge, 10000);
 
     // WebSocket connection
     let ws: WebSocket;
@@ -70,6 +83,7 @@ export default function App() {
         const data = JSON.parse(event.data);
         if (data.type === 'STATE_UPDATE') {
           setState(data.state);
+          if (data.latency) setLatency(data.latency);
         }
         if (data.type === 'TRADE_OPENED') {
           console.log('New trade opened:', data.trade);
@@ -95,8 +109,25 @@ export default function App() {
     return () => {
       if (ws) ws.close();
       clearTimeout(reconnectTimeout);
+      clearInterval(bridgeInterval);
     };
   }, []);
+
+  const closeTrade = async (id: string) => {
+    try {
+      await fetch(`/api/trade/close/${id}`, { method: 'POST' });
+    } catch (error) {
+      console.error('Error closing trade:', error);
+    }
+  };
+
+  const closeAll = async () => {
+    try {
+      await fetch('/api/trade/close-all', { method: 'POST' });
+    } catch (error) {
+      console.error('Error closing all trades:', error);
+    }
+  };
 
   if (!state) return (
     <div className="min-h-screen bg-[#0c0c0c] flex items-center justify-center">
@@ -106,6 +137,20 @@ export default function App() {
 
   const activePrice = state.prices[activeSymbol] || 0;
   const activeAnalysis = state.lastAnalysis[activeSymbol] || {};
+
+  const calculateProfit = (trade: any) => {
+    const currentPrice = state.prices[trade.symbol] || trade.entryPrice;
+    const diff = trade.action === 'BUY' ? (currentPrice - trade.entryPrice) : (trade.entryPrice - currentPrice);
+    
+    const MULTIPLIER: Record<string, number> = {
+      EURUSD: 100000, GBPUSD: 100000, USDJPY: 100000,
+      BTCUSD: 1, ETHUSD: 1
+    };
+    
+    return diff * trade.volume * (MULTIPLIER[trade.symbol] || 100000);
+  };
+
+  const totalProfit = state.activeTrades.reduce((acc: number, trade: any) => acc + calculateProfit(trade), 0);
 
   return (
     <div className="h-screen bg-[#0c0c0c] text-neutral-300 font-sans flex flex-col overflow-hidden select-none text-[11px]">
@@ -122,8 +167,10 @@ export default function App() {
           <div className="flex items-center gap-3">
             <span className="text-neutral-500 uppercase text-[10px] font-bold">Status:</span>
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-emerald-500 font-bold uppercase text-[10px]">Live Bridge Connected</span>
+              <div className={cn("w-2 h-2 rounded-full animate-pulse", bridgeConnected ? "bg-emerald-500" : "bg-red-500")} />
+              <span className={cn("font-bold uppercase text-[10px]", bridgeConnected ? "text-emerald-500" : "text-red-500")}>
+                {bridgeConnected ? "Live Bridge Connected" : "Bridge Disconnected"}
+              </span>
             </div>
           </div>
         </div>
@@ -139,7 +186,10 @@ export default function App() {
               <p className="text-sm font-mono font-bold text-blue-400">{state.activeTrades.length}</p>
             </div>
           </div>
-          <button className="bg-red-600/10 text-red-500 border border-red-500/20 px-3 py-1.5 rounded text-[10px] font-bold uppercase hover:bg-red-600/20 transition-all">
+          <button 
+            onClick={closeAll}
+            className="bg-red-600/10 text-red-500 border border-red-500/20 px-3 py-1.5 rounded text-[10px] font-bold uppercase hover:bg-red-600/20 transition-all"
+          >
             Emergency Stop
           </button>
         </div>
@@ -243,7 +293,12 @@ export default function App() {
             <div className="bg-[#141414] border border-[#111] rounded-lg overflow-hidden">
               <div className="p-3 bg-[#1e1e1e] border-b border-[#111] flex items-center justify-between">
                 <span className="text-[10px] font-bold uppercase text-neutral-500">Active Positions</span>
-                <button className="text-[10px] font-bold text-blue-400 uppercase hover:text-blue-300">Close All</button>
+                <button 
+                  onClick={closeAll}
+                  className="text-[10px] font-bold text-blue-400 uppercase hover:text-blue-300"
+                >
+                  Close All
+                </button>
               </div>
               <table className="w-full text-[10px]">
                 <thead className="bg-[#1a1a1a] text-neutral-600">
@@ -263,21 +318,29 @@ export default function App() {
                       <td colSpan={7} className="p-8 text-center text-neutral-600 italic">No active trades. Bot is scanning for opportunities...</td>
                     </tr>
                   ) : (
-                    state.activeTrades.map((trade: any) => (
-                      <tr key={trade.id} className="border-t border-[#111] hover:bg-white/5 transition-all">
-                        <td className="p-3 font-bold text-white">{trade.symbol}</td>
-                        <td className={cn("p-3 font-bold", trade.action === 'BUY' ? "text-emerald-500" : "text-red-500")}>{trade.action}</td>
-                        <td className="p-3 text-right font-mono">{trade.volume.toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono">{trade.entryPrice.toFixed(5)}</td>
-                        <td className="p-3 text-right font-mono">{state.prices[trade.symbol]?.toFixed(5)}</td>
-                        <td className={cn("p-3 text-right font-mono font-bold", (state.prices[trade.symbol] - trade.entryPrice) >= 0 ? "text-emerald-500" : "text-red-500")}>
-                          ${((state.prices[trade.symbol] - trade.entryPrice) * trade.volume * 100000).toFixed(2)}
-                        </td>
-                        <td className="p-3 text-center">
-                          <button className="text-red-500 hover:text-red-400 font-bold uppercase text-[9px]">Close</button>
-                        </td>
-                      </tr>
-                    ))
+                    state.activeTrades.map((trade: any) => {
+                      const profit = calculateProfit(trade);
+                      return (
+                        <tr key={trade.id} className="border-t border-[#111] hover:bg-white/5 transition-all">
+                          <td className="p-3 font-bold text-white">{trade.symbol}</td>
+                          <td className={cn("p-3 font-bold", trade.action === 'BUY' ? "text-emerald-500" : "text-red-500")}>{trade.action}</td>
+                          <td className="p-3 text-right font-mono">{trade.volume.toFixed(2)}</td>
+                          <td className="p-3 text-right font-mono">{trade.entryPrice.toFixed(5)}</td>
+                          <td className="p-3 text-right font-mono">{state.prices[trade.symbol]?.toFixed(5)}</td>
+                          <td className={cn("p-3 text-right font-mono font-bold", profit >= 0 ? "text-emerald-500" : "text-red-500")}>
+                            ${profit.toFixed(2)}
+                          </td>
+                          <td className="p-3 text-center">
+                            <button 
+                              onClick={() => closeTrade(trade.id)}
+                              className="text-red-500 hover:text-red-400 font-bold uppercase text-[9px]"
+                            >
+                              Close
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -290,14 +353,16 @@ export default function App() {
       <footer className="h-8 bg-[#1e1e1e] border-t border-[#111] flex items-center px-4 justify-between shrink-0 text-[10px] text-neutral-500">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span>Terminal Connected</span>
+            <div className={cn("w-1.5 h-1.5 rounded-full", bridgeConnected ? "bg-emerald-500" : "bg-red-500")} />
+            <span>{bridgeConnected ? "Terminal Connected" : "Terminal Offline"}</span>
           </div>
           <div className="h-3 w-px bg-white/5" />
-          <span>Latency: 42ms</span>
+          <span>Latency: {latency}ms</span>
         </div>
         <div className="flex items-center gap-4">
-          <span>Daily P/L: <span className="text-emerald-500 font-bold">+$142.50</span></span>
+          <span>Daily P/L: <span className={cn("font-bold", totalProfit >= 0 ? "text-emerald-500" : "text-red-500")}>
+            {totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(2)}
+          </span></span>
           <div className="h-3 w-px bg-white/5" />
           <span>{new Date().toLocaleString()}</span>
         </div>

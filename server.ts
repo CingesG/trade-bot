@@ -38,25 +38,40 @@ async function startServer() {
     lastAnalysis: {}
   };
 
+  const aiCooldowns: Record<string, number> = {};
+
   // WebSocket broadcast
   const broadcast = (data: any) => {
+    const message = JSON.stringify({
+      ...data,
+      timestamp: Date.now()
+    });
     wss.clients.forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(data));
+        client.send(message);
       }
     });
   };
 
   // Main Bot Loop
   async function botCycle() {
+    const startTime = Date.now();
     try {
-      // Sync active trades with MT5 positions
-      const positionsResponse = await axios.get(`${config.BRIDGE_URL}/positions`, { timeout: 3000 });
-      const mt5Positions = positionsResponse.data;
+      // Sync balance and positions
+      const [accountRes, positionsRes] = await Promise.all([
+        axios.get(`${config.BRIDGE_URL}/account`, { timeout: 3000 }).catch(() => null),
+        axios.get(`${config.BRIDGE_URL}/positions`, { timeout: 3000 }).catch(() => ({ data: [] }))
+      ]);
+
+      if (accountRes) {
+        state.balance = accountRes.data.balance;
+      }
+
+      const mt5Positions = positionsRes.data;
       
       // Update state.activeTrades based on MT5 positions
       state.activeTrades = state.activeTrades.filter(trade => {
-        if (trade.id.startsWith('mock-')) return true; // Keep mock trades
+        if (trade.id.startsWith('mock-')) return true;
         return mt5Positions.some((p: any) => p.ticket === trade.mt5Order);
       });
 
@@ -74,31 +89,35 @@ async function startServer() {
 
           const riskCheck = await RiskService.canTrade(state.balance);
           
-          if (analysis.action !== 'HOLD' && analysis.confidence > 0.7 && riskCheck.allowed) {
-            const aiValidation = await AIService.validateSignal(symbol, analysis.action, analysis.indicators, currentPrice);
-            
-            if (aiValidation.decision === 'CONFIRM') {
-              const slPips = 20;
-              const lotSize = RiskService.calculateLotSize(state.balance, slPips, symbol);
+          if (analysis.action !== 'HOLD' && analysis.confidence > 0.5 && riskCheck.allowed) {
+            // AI Cooldown check (30s)
+            const now = Date.now();
+            if (!aiCooldowns[symbol] || now - aiCooldowns[symbol] > 30000) {
+              const aiValidation = await AIService.validateSignal(symbol, analysis.action, analysis.indicators, currentPrice);
+              aiCooldowns[symbol] = now;
               
-              // Dynamic SL/TP based on symbol
-              let pipValue = 0.0001;
-              if (symbol.includes('JPY')) pipValue = 0.01;
-              else if (symbol.includes('BTC')) pipValue = 1.0;
-              else if (symbol.includes('ETH')) pipValue = 0.1;
+              if (aiValidation.decision === 'CONFIRM') {
+                const slPips = 20;
+                const lotSize = RiskService.calculateLotSize(state.balance, slPips, symbol);
+                
+                let pipValue = 0.0001;
+                if (symbol.includes('JPY')) pipValue = 0.01;
+                else if (symbol.includes('BTC')) pipValue = 1.0;
+                else if (symbol.includes('ETH')) pipValue = 0.1;
 
-              const slDist = slPips * pipValue;
-              const tpDist = slDist * 2;
+                const slDist = slPips * pipValue;
+                const tpDist = slDist * 2;
 
-              const sl = analysis.action === 'BUY' ? currentPrice - slDist : currentPrice + slDist;
-              const tp = analysis.action === 'BUY' ? currentPrice + tpDist : currentPrice - tpDist;
-              
-              const result = await ExecutionService.placeOrder(symbol, analysis.action as 'BUY' | 'SELL', lotSize, sl, tp);
-              
-              if (result.success) {
-                state.activeTrades.push(result);
-                broadcast({ type: 'TRADE_OPENED', trade: result });
-                console.log(`[${symbol}] Trade opened: ${analysis.action} @ ${currentPrice}`);
+                const sl = analysis.action === 'BUY' ? currentPrice - slDist : currentPrice + slDist;
+                const tp = analysis.action === 'BUY' ? currentPrice + tpDist : currentPrice - tpDist;
+                
+                const result = await ExecutionService.placeOrder(symbol, analysis.action as 'BUY' | 'SELL', lotSize, sl, tp);
+                
+                if (result.success) {
+                  state.activeTrades.push(result);
+                  broadcast({ type: 'TRADE_OPENED', trade: result });
+                  console.log(`[${symbol}] Trade opened: ${analysis.action} @ ${currentPrice}`);
+                }
               }
             }
           }
@@ -107,9 +126,10 @@ async function startServer() {
         }
       }
     } catch (error) {
-      console.error('Error syncing positions:', error.message);
+      console.error('Error in bot cycle:', error.message);
     }
-    broadcast({ type: 'STATE_UPDATE', state });
+    const latency = Date.now() - startTime;
+    broadcast({ type: 'STATE_UPDATE', state, latency });
   }
 
   setInterval(botCycle, 5000);
@@ -119,12 +139,34 @@ async function startServer() {
     res.json(state);
   });
 
-  app.post('/api/trade/close-all', async (req, res) => {
-    for (const trade of state.activeTrades) {
-      await ExecutionService.closeTrade(trade.id, trade.mt5Order);
+  app.get('/api/bridge-health', async (req, res) => {
+    try {
+      await axios.get(`${config.BRIDGE_URL}/price/EURUSD`, { timeout: 2000 });
+      res.json({ connected: true });
+    } catch (error) {
+      res.json({ connected: false });
     }
+  });
+
+  app.post('/api/trade/close/:id', async (req, res) => {
+    const trade = state.activeTrades.find(t => t.id === req.params.id);
+    if (trade) {
+      const result = await ExecutionService.closeTrade(trade.id, trade.mt5Order);
+      if (result.success) {
+        state.activeTrades = state.activeTrades.filter(t => t.id !== req.params.id);
+        return res.json({ success: true });
+      }
+      return res.status(500).json({ success: false, error: result.error });
+    }
+    res.status(404).json({ error: 'Trade not found' });
+  });
+
+  app.post('/api/trade/close-all', async (req, res) => {
+    const results = await Promise.all(
+      state.activeTrades.map(trade => ExecutionService.closeTrade(trade.id, trade.mt5Order))
+    );
     state.activeTrades = [];
-    res.json({ success: true });
+    res.json({ success: true, results });
   });
 
   // Vite middleware for development
