@@ -1,0 +1,5 @@
+{
+  "name": "Ultimate AI MT5 Autotrader",
+  "description": "A production-ready, real-time AI-powered trading system for MetaTrader 5. Features tick-data analysis, LSTM predictions, and automated risk management.",
+  "requestFramePermissions": []
+}
