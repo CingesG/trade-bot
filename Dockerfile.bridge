@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+# Note: MetaTrader5 package only works on Windows, 
+# so for Linux we might need a mock or a specific wine setup if real MT5 is needed.
+# However, for this bridge, we assume it runs in an environment where it can access MT5.
+COPY bridge.py .
+RUN pip install fastapi uvicorn pydantic MetaTrader5 axios
+
+EXPOSE 8001
+
+CMD ["python", "bridge.py"]

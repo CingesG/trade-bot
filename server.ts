@@ -8,6 +8,7 @@ import { StrategyService } from './services/strategy-service';
 import { AIService } from './services/ai-service';
 import { RiskService } from './services/risk-service';
 import { ExecutionService } from './services/execution-service';
+import { Logger } from './services/logger';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -116,17 +117,17 @@ async function startServer() {
                 if (result.success) {
                   state.activeTrades.push(result);
                   broadcast({ type: 'TRADE_OPENED', trade: result });
-                  console.log(`[${symbol}] Trade opened: ${analysis.action} @ ${currentPrice}`);
+                  Logger.info(`[${symbol}] Trade opened: ${analysis.action} @ ${currentPrice}`, result);
                 }
               }
             }
           }
         } catch (error) {
-          console.error(`Error in bot cycle for ${symbol}:`, error.message);
+          Logger.error(`Error in bot cycle for ${symbol}: ${error.message}`);
         }
       }
     } catch (error) {
-      console.error('Error in bot cycle:', error.message);
+      Logger.error(`Error in bot cycle: ${error.message}`);
     }
     const latency = Date.now() - startTime;
     broadcast({ type: 'STATE_UPDATE', state, latency });

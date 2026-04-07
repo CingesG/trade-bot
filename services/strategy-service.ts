@@ -18,13 +18,22 @@ export class StrategyService {
       SimpleMASignal: false
     });
 
-    const lastRsi = rsi[rsi.length - 1];
-    const lastEmaFast = emaFast[emaFast.length - 1];
-    const lastEmaSlow = emaSlow[emaSlow.length - 1];
-    const lastMacd = macd[macd.length - 1];
+    const lastRsi = rsi.length > 0 ? rsi[rsi.length - 1] : 50;
+    const lastEmaFast = emaFast.length > 0 ? emaFast[emaFast.length - 1] : 0;
+    const lastEmaSlow = emaSlow.length > 0 ? emaSlow[emaSlow.length - 1] : 0;
+    const lastMacd = macd.length > 0 ? macd[macd.length - 1] : { histogram: 0 };
 
     let confidence = 0;
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+
+    // Guard against insufficient data
+    if (rsi.length === 0 || emaFast.length === 0 || emaSlow.length === 0) {
+      return {
+        action: 'HOLD',
+        confidence: 0,
+        indicators: { rsi: 50, emaFast: 0, emaSlow: 0, macd: lastMacd }
+      };
+    }
 
     // Weighted System
     // RSI: 0.4
