@@ -1,40 +1,54 @@
-import { AnalysisResult } from './ai-service';
-
-export interface StrategySignal {
-  action: 'BUY' | 'SELL' | 'HOLD';
-  reason: string;
-}
+import { RSI, EMA, MACD } from 'technicalindicators';
+import { Candle } from './data-service';
 
 export class StrategyService {
-  static generateSignal(analysis: AnalysisResult): StrategySignal {
-    const { rsi, prediction, confidence } = analysis;
-    const hist = analysis.macd?.histogram || 0;
+  static analyze(candles: Candle[]) {
+    const closes = candles.map(c => c.close);
+    
+    // Indicators
+    const rsi = RSI.calculate({ values: closes, period: 14 });
+    const emaFast = EMA.calculate({ values: closes, period: 9 });
+    const emaSlow = EMA.calculate({ values: closes, period: 21 });
+    const macd = MACD.calculate({
+      values: closes,
+      fastPeriod: 12,
+      slowPeriod: 26,
+      signalPeriod: 9,
+      SimpleMAOscillator: false,
+      SimpleMASignal: false
+    });
 
-    // Logic: IF RSI < 35 AND prediction = up → BUY
-    if (rsi < 35 && prediction === 'up' && confidence > 0.7) {
-      return { 
-        action: 'BUY', 
-        reason: `Oversold RSI (${rsi.toFixed(2)}) + Bullish AI Prediction (${(confidence * 100).toFixed(0)}%)` 
-      };
-    }
+    const lastRsi = rsi[rsi.length - 1];
+    const lastEmaFast = emaFast[emaFast.length - 1];
+    const lastEmaSlow = emaSlow[emaSlow.length - 1];
+    const lastMacd = macd[macd.length - 1];
 
-    // Logic: IF RSI > 65 AND prediction = down → SELL
-    if (rsi > 65 && prediction === 'down' && confidence > 0.7) {
-      return { 
-        action: 'SELL', 
-        reason: `Overbought RSI (${rsi.toFixed(2)}) + Bearish AI Prediction (${(confidence * 100).toFixed(0)}%)` 
-      };
-    }
+    let score = 0;
+    let confidence = 0;
 
-    // Secondary Trend Logic
-    if (rsi < 45 && hist > 0 && prediction === 'up') {
-      return { action: 'BUY', reason: 'Trend reversal detected: MACD Bullish + AI Support' };
-    }
+    // RSI Logic
+    if (lastRsi < 30) score += 1;
+    if (lastRsi > 70) score -= 1;
 
-    if (rsi > 55 && hist < 0 && prediction === 'down') {
-      return { action: 'SELL', reason: 'Trend reversal detected: MACD Bearish + AI Support' };
-    }
+    // EMA Cross
+    if (lastEmaFast > lastEmaSlow) score += 1;
+    else score -= 1;
 
-    return { action: 'HOLD', reason: 'Waiting for high-confidence signal' };
+    // MACD
+    if (lastMacd && lastMacd.histogram! > 0) score += 1;
+    else score -= 1;
+
+    confidence = Math.abs(score) / 3;
+
+    return {
+      action: score > 1 ? 'BUY' : (score < -1 ? 'SELL' : 'HOLD'),
+      confidence,
+      indicators: {
+        rsi: lastRsi,
+        emaFast: lastEmaFast,
+        emaSlow: lastEmaSlow,
+        macd: lastMacd
+      }
+    };
   }
 }

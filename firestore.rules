@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidTrade(data) {
+      return data.symbol is string &&
+             data.action in ['BUY', 'SELL'] &&
+             data.volume is number &&
+             data.entryPrice is number &&
+             data.status in ['OPEN', 'CLOSED'];
+    }
+
+    // Trades collection
+    match /trades/{tradeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTrade(request.resource.data);
+      allow update: if isAuthenticated() && isValidTrade(request.resource.data);
+      allow delete: if false; // Never delete trades for audit trail
+    }
+
+    // Logs collection
+    match /logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // Performance collection
+    match /performance/{date} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+  }
+}

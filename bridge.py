@@ -74,38 +74,83 @@ def get_klines(symbol: str, timeframe: str = "1m", count: int = 100):
 
 @app.post("/order")
 def place_order(req: TradeRequest):
-    symbol_info = mt5.symbol_info(req.symbol)
-    if symbol_info is None:
-        raise HTTPException(status_code=404, detail="Symbol not found")
+    try:
+        symbol_info = mt5.symbol_info(req.symbol)
+        if symbol_info is None:
+            raise HTTPException(status_code=404, detail="Symbol not found")
 
-    if not symbol_info.visible:
-        if not mt5.symbol_select(req.symbol, True):
-            raise HTTPException(status_code=400, detail="Symbol select failed")
+        if not symbol_info.visible:
+            if not mt5.symbol_select(req.symbol, True):
+                raise HTTPException(status_code=400, detail="Symbol select failed")
 
-    order_type = mt5.ORDER_TYPE_BUY if req.action == "BUY" else mt5.ORDER_TYPE_SELL
-    tick = mt5.symbol_info_tick(req.symbol)
-    price = tick.ask if req.action == "BUY" else tick.bid
+        order_type = mt5.ORDER_TYPE_BUY if req.action == "BUY" else mt5.ORDER_TYPE_SELL
+        tick = mt5.symbol_info_tick(req.symbol)
+        price = tick.ask if req.action == "BUY" else tick.bid
 
-    request = {
-        "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": req.symbol,
-        "volume": req.volume,
-        "type": order_type,
-        "price": price,
-        "magic": 234000,
-        "comment": "AI Bot Trade",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
-    }
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": req.symbol,
+            "volume": req.volume,
+            "type": order_type,
+            "price": price,
+            "magic": 234000,
+            "comment": "AI Bot Trade",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
 
-    if req.sl: request["sl"] = req.sl
-    if req.tp: request["tp"] = req.tp
+        if req.sl: request["sl"] = req.sl
+        if req.tp: request["tp"] = req.tp
 
-    result = mt5.order_send(request)
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        return {"success": False, "error": str(result.comment), "retcode": result.retcode}
-    
-    return {"success": True, "order": result.order, "price": result.price}
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return {"success": False, "error": str(result.comment), "retcode": result.retcode}
+        
+        return {"success": True, "order": result.order, "price": result.price}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+class CloseRequest(BaseModel):
+    order: int
+
+@app.post("/close")
+def close_order(req: CloseRequest):
+    try:
+        # Find the position by order ID
+        positions = mt5.positions_get(ticket=req.order)
+        if not positions:
+            return {"success": False, "error": "Position not found"}
+        
+        position = positions[0]
+        symbol = position.symbol
+        order_type = mt5.ORDER_TYPE_SELL if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        tick = mt5.symbol_info_tick(symbol)
+        price = tick.bid if position.type == mt5.POSITION_TYPE_BUY else tick.ask
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": position.volume,
+            "type": order_type,
+            "position": position.ticket,
+            "price": price,
+            "magic": 234000,
+            "comment": "AI Bot Close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return {"success": False, "error": str(result.comment), "retcode": result.retcode}
+        
+        return {
+            "success": True, 
+            "price": result.price, 
+            "profit": position.profit + position.swap + position.commission
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

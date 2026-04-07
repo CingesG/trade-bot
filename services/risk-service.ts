@@ -1,57 +1,44 @@
-export interface RiskValidation {
-  allowed: boolean;
-  reason?: string;
-  lotSize?: number;
-  stopLoss?: number;
-  takeProfit?: number;
-}
+import { db } from '../src/lib/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 export class RiskService {
-  private static RISK_PER_TRADE = 0.02; // 2% default
-  private static MAX_DAILY_LOSS = 0.05; // 5%
+  private static MAX_RISK_PER_TRADE = 0.01; // 1%
+  private static MAX_CONCURRENT_TRADES = 3;
+  private static DAILY_LOSS_LIMIT = 0.05; // 5%
 
-  static calculatePosition(
-    balance: number,
-    price: number,
-    action: 'BUY' | 'SELL',
-    symbol: string,
-    riskPercent: number = 0.02
-  ): RiskValidation {
-    const riskAmount = balance * riskPercent;
+  static async canTrade(balance: number): Promise<{ allowed: boolean; reason?: string }> {
+    const tradesRef = collection(db, 'trades');
     
-    // Position sizing logic based on asset class
-    let stopLossPips = 20;
-    let pipValue = 10; // Default for 1 lot Forex
-    let lotStep = 0.01;
-
-    if (symbol.includes('XAU')) {
-      stopLossPips = 50; // 50 pips for Gold ($5 move)
-      pipValue = 10; // $10 per lot per $1 move
-    } else if (symbol.includes('BTC') || symbol.includes('ETH')) {
-      stopLossPips = 500; // Wider stops for crypto
-      pipValue = 1; // $1 per lot per $1 move
+    // Check concurrent trades
+    const activeQuery = query(tradesRef, where('status', '==', 'OPEN'));
+    const activeSnapshot = await getDocs(activeQuery);
+    if (activeSnapshot.size >= this.MAX_CONCURRENT_TRADES) {
+      return { allowed: false, reason: 'Max concurrent trades reached' };
     }
 
-    const lotSize = parseFloat((riskAmount / (stopLossPips * pipValue)).toFixed(2));
+    // Check daily loss
+    const today = new Date().toISOString().split('T')[0];
+    const performanceRef = collection(db, 'performance');
+    const perfQuery = query(performanceRef, where('date', '==', today));
+    const perfSnapshot = await getDocs(perfQuery);
     
-    if (lotSize <= 0) {
-      return { allowed: false, reason: 'Balance too low for minimum lot size.' };
+    if (!perfSnapshot.empty) {
+      const dailyData = perfSnapshot.docs[0].data();
+      if (dailyData.dailyProfit < -(balance * this.DAILY_LOSS_LIMIT)) {
+        return { allowed: false, reason: 'Daily loss limit reached' };
+      }
     }
 
-    // Calculate SL/TP offsets based on asset class
-    const pipMultiplier = symbol.includes('XAU') ? 0.1 : symbol.includes('BTC') ? 1 : 0.0001;
-    const slOffset = stopLossPips * pipMultiplier;
-    const tpOffset = slOffset * 2.5;
-
-    return {
-      allowed: true,
-      lotSize: Math.max(0.01, lotSize),
-      stopLoss: action === 'BUY' ? price - slOffset : price + slOffset,
-      takeProfit: action === 'BUY' ? price + tpOffset : price - tpOffset
-    };
+    return { allowed: true };
   }
 
-  static validateDailyLimit(dailyLoss: number, balance: number): boolean {
-    return dailyLoss < balance * this.MAX_DAILY_LOSS;
+  static calculateLotSize(balance: number, stopLossPips: number, symbol: string): number {
+    // Basic lot calculation: (Balance * Risk%) / (SL Pips * Pip Value)
+    // Pip value varies by symbol, here we use a simplified version
+    const riskAmount = balance * this.MAX_RISK_PER_TRADE;
+    const pipValue = symbol.includes('JPY') ? 10 : 1; // Simplified
+    const lotSize = riskAmount / (stopLossPips * pipValue * 10); // Standard lot is 100,000 units
+    
+    return Math.max(0.01, parseFloat(lotSize.toFixed(2)));
   }
 }

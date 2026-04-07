@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "Trade": {
+      "title": "Trade",
+      "description": "A trading record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "symbol": { "type": "string" },
+        "action": { "type": "string", "enum": ["BUY", "SELL"] },
+        "volume": { "type": "number" },
+        "entryPrice": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "sl": { "type": "number" },
+        "tp": { "type": "number" },
+        "profit": { "type": "number" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "closedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["symbol", "action", "volume", "entryPrice", "status", "timestamp"]
+    },
+    "Log": {
+      "title": "Log",
+      "description": "System logs",
+      "type": "object",
+      "properties": {
+        "level": { "type": "string", "enum": ["INFO", "WARN", "ERROR"] },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "context": { "type": "string" }
+      },
+      "required": ["level", "message", "timestamp"]
+    },
+    "Performance": {
+      "title": "Performance",
+      "description": "Daily performance tracking",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "dailyProfit": { "type": "number" },
+        "totalTrades": { "type": "number" },
+        "winRate": { "type": "number" }
+      },
+      "required": ["date", "dailyProfit"]
+    }
+  },
+  "firestore": {
+    "/trades/{tradeId}": {
+      "schema": "Trade",
+      "description": "Collection of all trades"
+    },
+    "/logs/{logId}": {
+      "schema": "Log",
+      "description": "System event logs"
+    },
+    "/performance/{date}": {
+      "schema": "Performance",
+      "description": "Daily performance metrics"
+    }
+  }
+}
