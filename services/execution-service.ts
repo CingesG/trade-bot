@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { adminDb } from '../src/lib/firebaseAdmin';
 import { config } from '../config';
+import { Logger } from './logger';
 
 export class ExecutionService {
   static async placeOrder(symbol: string, action: 'BUY' | 'SELL', volume: number, sl?: number, tp?: number) {
@@ -48,6 +49,7 @@ export class ExecutionService {
         return { success: true, ...mockTrade };
       }
       console.error('Order execution failed:', error.message);
+      Logger.error(`Order execution failed for ${symbol}: ${error.message}`);
       return { success: false, error: 'Bridge connection failed' };
     }
   }
